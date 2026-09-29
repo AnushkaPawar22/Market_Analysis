@@ -1,18 +1,18 @@
-
+```python
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.decomposition import PCA
 
-# ============================================================
-# PAGE CONFIG
-# ============================================================
+
+# =========================================================
+# PAGE CONFIGURATION
+# =========================================================
 
 st.set_page_config(
     page_title="MarketBasket AI",
@@ -21,14 +21,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ============================================================
+
+# =========================================================
 # CUSTOM CSS
-# ============================================================
+# =========================================================
 
 st.markdown("""
 <style>
 
-.main {
+.stApp {
     background-color: #f7f8fc;
 }
 
@@ -57,28 +58,32 @@ st.markdown("""
 
 .kpi {
     background: white;
-    padding: 22px;
+    padding: 20px;
     border-radius: 16px;
-    box-shadow: 0 4px 18px rgba(0,0,0,0.06);
-    border: 1px solid #eeeeee;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+    text-align: center;
 }
 
 .kpi-title {
     color: #6b7280;
-    font-size: 14px;
+    font-size: 13px;
+    font-weight: 600;
 }
 
 .kpi-value {
+    color: #111827;
     font-size: 28px;
     font-weight: 700;
-    color: #111827;
+    margin-top: 5px;
 }
 
 .section-title {
-    font-size: 24px;
+    font-size: 25px;
     font-weight: 700;
     color: #111827;
-    margin-top: 20px;
+    margin-top: 25px;
+    margin-bottom: 15px;
 }
 
 .insight {
@@ -91,18 +96,20 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ============================================================
-# LOAD DATA
-# ============================================================
+
+# =========================================================
+# LOAD DATASET
+# =========================================================
 
 @st.cache_data
 def load_data():
 
     df = pd.read_csv("Groceries_dataset.csv")
 
+    # Clean column names
     df.columns = df.columns.str.strip()
 
-    # Clean columns
+    # Clean product names
     df["itemDescription"] = (
         df["itemDescription"]
         .astype(str)
@@ -110,6 +117,7 @@ def load_data():
         .str.lower()
     )
 
+    # Convert date
     df["Date"] = pd.to_datetime(
         df["Date"],
         dayfirst=True,
@@ -119,35 +127,57 @@ def load_data():
     # Remove duplicates
     df = df.drop_duplicates()
 
-    # Remove invalid rows
+    # Remove missing values
     df = df.dropna(
-        subset=["Member_number", "Date", "itemDescription"]
+        subset=[
+            "Member_number",
+            "Date",
+            "itemDescription"
+        ]
     )
 
     return df
 
 
-df = load_data()
+try:
 
-# ============================================================
-# BASIC INFORMATION
-# ============================================================
+    df = load_data()
+
+except Exception as e:
+
+    st.error("Unable to load Groceries_dataset.csv")
+
+    st.write("Make sure the CSV file is present in the GitHub repository.")
+
+    st.stop()
+
+
+# =========================================================
+# BASIC DATA INFORMATION
+# =========================================================
 
 total_transactions = len(df)
+
 total_customers = df["Member_number"].nunique()
+
 total_products = df["itemDescription"].nunique()
 
-# ============================================================
-# TRANSACTION MATRIX
-# ============================================================
+
+# =========================================================
+# CREATE CUSTOMER-PRODUCT MATRIX
+# =========================================================
 
 @st.cache_data
 def create_basket(data):
 
     basket = data.groupby(
-        ["Member_number", "itemDescription"]
+        [
+            "Member_number",
+            "itemDescription"
+        ]
     ).size().unstack(fill_value=0)
 
+    # Convert to presence / absence
     basket = (basket > 0).astype(int)
 
     return basket
@@ -155,20 +185,23 @@ def create_basket(data):
 
 basket = create_basket(df)
 
-# ============================================================
+
+# =========================================================
 # PRODUCT CLUSTERING
-# ============================================================
+# =========================================================
 
 @st.cache_data
 def perform_clustering(basket):
 
+    # Products become rows
     product_data = basket.T
 
+    # Scale data
     scaler = StandardScaler()
 
     X_scaled = scaler.fit_transform(product_data)
 
-    # K = 5
+    # K-Means
     kmeans = KMeans(
         n_clusters=5,
         random_state=42,
@@ -177,47 +210,51 @@ def perform_clustering(basket):
 
     clusters = kmeans.fit_predict(X_scaled)
 
-    result = pd.DataFrame({
+    # Cluster result
+    cluster_data = pd.DataFrame({
         "Product": product_data.index,
         "Cluster": clusters
     })
 
+    # Silhouette score
     score = silhouette_score(
         X_scaled,
         clusters
     )
 
     # PCA
-    pca = PCA(n_components=2)
+    pca = PCA(
+        n_components=2,
+        random_state=42
+    )
 
     X_pca = pca.fit_transform(X_scaled)
 
-    result["PC1"] = X_pca[:, 0]
-    result["PC2"] = X_pca[:, 1]
+    cluster_data["PC1"] = X_pca[:, 0]
+    cluster_data["PC2"] = X_pca[:, 1]
 
-    return result, score
+    return cluster_data, score
 
 
 cluster_data, silhouette = perform_clustering(basket)
 
-# ============================================================
-# CO-PURCHASE ANALYSIS
-# ============================================================
+
+# =========================================================
+# FREQUENT PRODUCT PAIRS
+# =========================================================
 
 @st.cache_data
 def create_pairs(basket):
 
+    # Product-product co-occurrence matrix
     co_matrix = basket.T.dot(basket)
 
-    np.fill_diagonal(
-        co_matrix.values,
-        0
-    )
-
-    products = co_matrix.index
+    products = list(co_matrix.index)
 
     pairs = []
 
+    # Only upper triangle is checked.
+    # Therefore diagonal values are never included.
     for i in range(len(products)):
 
         for j in range(i + 1, len(products)):
@@ -243,24 +280,28 @@ def create_pairs(basket):
         ]
     )
 
-    pair_df = pair_df.sort_values(
-        "Purchase Together",
-        ascending=False
-    )
+    if not pair_df.empty:
+
+        pair_df = pair_df.sort_values(
+            "Purchase Together",
+            ascending=False
+        ).reset_index(drop=True)
 
     return pair_df
 
 
 pair_df = create_pairs(basket)
 
-# ============================================================
-# SIDEBAR
-# ============================================================
 
-st.sidebar.markdown("## 🛒 MarketBasket AI")
+# =========================================================
+# SIDEBAR
+# =========================================================
 
 st.sidebar.markdown(
-    "### Retail Purchase Intelligence"
+    """
+    # 🛒 MarketBasket AI
+    ### Retail Purchase Intelligence
+    """
 )
 
 st.sidebar.divider()
@@ -278,83 +319,130 @@ page = st.sidebar.radio(
 
 st.sidebar.divider()
 
-st.sidebar.info(
-    "Dataset: Groceries Dataset\n\n"
-    "Model: K-Means\n\n"
-    "Clusters: 5"
+st.sidebar.markdown(
+    """
+    **Machine Learning**
+
+    Algorithm: K-Means
+
+    Clusters: 5
+
+    Dataset: Groceries Dataset
+    """
 )
 
-# ============================================================
-# HERO
-# ============================================================
 
-st.markdown("""
-<div class="hero">
+# =========================================================
+# HEADER
+# =========================================================
 
-<h1>🛒 MarketBasket AI</h1>
+st.markdown(
+    """
+    <div class="hero">
 
-<p>
-Retail Market Basket Clustering & Purchase Intelligence
-</p>
+        <h1>🛒 MarketBasket AI</h1>
 
-</div>
-""", unsafe_allow_html=True)
+        <p>
+        Retail Market Basket Clustering &
+        Purchase Intelligence Dashboard
+        </p>
 
-# ============================================================
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# =========================================================
 # KPI CARDS
-# ============================================================
+# =========================================================
 
 c1, c2, c3, c4 = st.columns(4)
 
+
 with c1:
+
     st.markdown(
         f"""
         <div class="kpi">
-        <div class="kpi-title">TOTAL TRANSACTIONS</div>
-        <div class="kpi-value">{total_transactions:,}</div>
+
+            <div class="kpi-title">
+            TOTAL TRANSACTIONS
+            </div>
+
+            <div class="kpi-value">
+            {total_transactions:,}
+            </div>
+
         </div>
         """,
         unsafe_allow_html=True
     )
+
 
 with c2:
+
     st.markdown(
         f"""
         <div class="kpi">
-        <div class="kpi-title">CUSTOMERS</div>
-        <div class="kpi-value">{total_customers:,}</div>
+
+            <div class="kpi-title">
+            CUSTOMERS
+            </div>
+
+            <div class="kpi-value">
+            {total_customers:,}
+            </div>
+
         </div>
         """,
         unsafe_allow_html=True
     )
+
 
 with c3:
+
     st.markdown(
         f"""
         <div class="kpi">
-        <div class="kpi-title">PRODUCTS</div>
-        <div class="kpi-value">{total_products:,}</div>
+
+            <div class="kpi-title">
+            PRODUCTS
+            </div>
+
+            <div class="kpi-value">
+            {total_products:,}
+            </div>
+
         </div>
         """,
         unsafe_allow_html=True
     )
+
 
 with c4:
+
     st.markdown(
         f"""
         <div class="kpi">
-        <div class="kpi-title">SILHOUETTE SCORE</div>
-        <div class="kpi-value">{silhouette:.3f}</div>
+
+            <div class="kpi-title">
+            SILHOUETTE SCORE
+            </div>
+
+            <div class="kpi-value">
+            {silhouette:.3f}
+            </div>
+
         </div>
         """,
         unsafe_allow_html=True
     )
 
-st.write("")
 
-# ============================================================
-# OVERVIEW
-# ============================================================
+# =========================================================
+# PAGE 1 — OVERVIEW
+# =========================================================
 
 if page == "🏠 Overview":
 
@@ -365,7 +453,9 @@ if page == "🏠 Overview":
 
     col1, col2 = st.columns(2)
 
-    # TOP PRODUCTS
+
+    # ---------------- TOP PRODUCTS ----------------
+
     with col1:
 
         top_products = (
@@ -380,6 +470,11 @@ if page == "🏠 Overview":
             "Purchases"
         ]
 
+        top_products["Product"] = (
+            top_products["Product"]
+            .str.title()
+        )
+
         fig = px.bar(
             top_products,
             x="Purchases",
@@ -390,7 +485,9 @@ if page == "🏠 Overview":
 
         fig.update_layout(
             height=450,
-            yaxis=dict(categoryorder="total ascending")
+            yaxis=dict(
+                categoryorder="total ascending"
+            )
         )
 
         st.plotly_chart(
@@ -398,16 +495,22 @@ if page == "🏠 Overview":
             use_container_width=True
         )
 
-    # MONTHLY TREND
+
+    # ---------------- MONTHLY TREND ----------------
+
     with col2:
 
         monthly = (
             df.assign(
-                Month=df["Date"].dt.to_period("M").astype(str)
+                Month=df["Date"]
+                .dt.to_period("M")
+                .astype(str)
             )
             .groupby("Month")
             .size()
-            .reset_index(name="Transactions")
+            .reset_index(
+                name="Transactions"
+            )
         )
 
         fig = px.line(
@@ -427,10 +530,8 @@ if page == "🏠 Overview":
             use_container_width=True
         )
 
-    st.markdown(
-        '<div class="section-title">💡 Quick Insight</div>',
-        unsafe_allow_html=True
-    )
+
+    # ---------------- INSIGHT ----------------
 
     top_product = (
         df["itemDescription"]
@@ -438,25 +539,31 @@ if page == "🏠 Overview":
         .index[0]
     )
 
+    top_count = (
+        df["itemDescription"]
+        .value_counts()
+        .iloc[0]
+    )
+
     st.markdown(
         f"""
         <div class="insight">
 
-        <b>{top_product.title()}</b> is the most frequently
-        purchased product in the dataset.
+        💡 <b>Key Insight:</b>
 
-        The system also identifies product groups using
-        K-Means clustering and discovers frequently
-        co-purchased product pairs.
+        <b>{top_product.title()}</b>
+        is the most purchased product with
+        <b>{top_count:,}</b> recorded purchases.
 
         </div>
         """,
         unsafe_allow_html=True
     )
 
-# ============================================================
-# PURCHASE ANALYTICS
-# ============================================================
+
+# =========================================================
+# PAGE 2 — PURCHASE ANALYTICS
+# =========================================================
 
 elif page == "📊 Purchase Analytics":
 
@@ -467,9 +574,9 @@ elif page == "📊 Purchase Analytics":
 
     top_n = st.slider(
         "Number of products to display",
-        5,
-        20,
-        10
+        min_value=5,
+        max_value=20,
+        value=10
     )
 
     top_products = (
@@ -484,6 +591,11 @@ elif page == "📊 Purchase Analytics":
         "Purchases"
     ]
 
+    top_products["Product"] = (
+        top_products["Product"]
+        .str.title()
+    )
+
     fig = px.bar(
         top_products,
         x="Product",
@@ -492,8 +604,8 @@ elif page == "📊 Purchase Analytics":
     )
 
     fig.update_layout(
-        xaxis_tickangle=-45,
-        height=500
+        height=500,
+        xaxis_tickangle=-45
     )
 
     st.plotly_chart(
@@ -501,14 +613,20 @@ elif page == "📊 Purchase Analytics":
         use_container_width=True
     )
 
-    # MONTHLY
+
+    # Monthly trend
+
     monthly = (
         df.assign(
-            Month=df["Date"].dt.to_period("M").astype(str)
+            Month=df["Date"]
+            .dt.to_period("M")
+            .astype(str)
         )
         .groupby("Month")
         .size()
-        .reset_index(name="Transactions")
+        .reset_index(
+            name="Transactions"
+        )
     )
 
     fig = px.area(
@@ -523,77 +641,120 @@ elif page == "📊 Purchase Analytics":
         use_container_width=True
     )
 
-# ============================================================
-# FREQUENTLY BOUGHT TOGETHER
-# ============================================================
+
+# =========================================================
+# PAGE 3 — FREQUENTLY BOUGHT TOGETHER
+# =========================================================
 
 elif page == "🔗 Frequently Bought Together":
 
     st.markdown(
-        '<div class="section-title">🔗 Frequently Bought Together</div>',
+        '<div class="section-title">'
+        '🔗 Frequently Bought Together'
+        '</div>',
         unsafe_allow_html=True
     )
 
     st.write(
-        "These product pairs occur together in the same "
-        "customer purchase history."
+        "Products that frequently appear in the "
+        "same customer's purchase history."
     )
 
-    top_pairs = pair_df.head(15).copy()
 
-    top_pairs["Pair"] = (
-        top_pairs["Product 1"].str.title()
-        + " + "
-        + top_pairs["Product 2"].str.title()
-    )
+    if pair_df.empty:
 
-    fig = px.bar(
-        top_pairs,
-        x="Purchase Together",
-        y="Pair",
-        orientation="h",
-        title="Top Frequently Purchased Product Pairs"
-    )
+        st.warning(
+            "No product-pair information available."
+        )
 
-    fig.update_layout(
-        height=600,
-        yaxis=dict(categoryorder="total ascending")
-    )
+    else:
 
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
+        top_pairs = pair_df.head(15).copy()
 
-    st.subheader("Top Product Pairs")
+        top_pairs["Pair"] = (
+            top_pairs["Product 1"]
+            .str.title()
+            + " + "
+            + top_pairs["Product 2"]
+            .str.title()
+        )
 
-    st.dataframe(
-        pair_df.head(20),
-        use_container_width=True,
-        hide_index=True
-    )
+        fig = px.bar(
+            top_pairs,
+            x="Purchase Together",
+            y="Pair",
+            orientation="h",
+            title="Top Frequently Purchased Product Pairs"
+        )
 
-    csv = pair_df.to_csv(index=False)
+        fig.update_layout(
+            height=600,
+            yaxis=dict(
+                categoryorder="total ascending"
+            )
+        )
 
-    st.download_button(
-        "⬇️ Download Product Pairs",
-        csv,
-        "frequent_product_pairs.csv",
-        "text/csv"
-    )
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
 
-# ============================================================
-# PRODUCT CLUSTERING
-# ============================================================
+
+        st.subheader(
+            "🛒 Product Pair Details"
+        )
+
+        display_pairs = pair_df.head(20).copy()
+
+        display_pairs["Product 1"] = (
+            display_pairs["Product 1"]
+            .str.title()
+        )
+
+        display_pairs["Product 2"] = (
+            display_pairs["Product 2"]
+            .str.title()
+        )
+
+        st.dataframe(
+            display_pairs,
+            use_container_width=True,
+            hide_index=True
+        )
+
+
+        # Download
+
+        csv = pair_df.to_csv(
+            index=False
+        )
+
+        st.download_button(
+            label="⬇️ Download Product Pairs",
+            data=csv,
+            file_name="frequent_product_pairs.csv",
+            mime="text/csv"
+        )
+
+
+# =========================================================
+# PAGE 4 — PRODUCT CLUSTERING
+# =========================================================
 
 elif page == "🧩 Product Clustering":
 
     st.markdown(
-        '<div class="section-title">🧩 Product Clustering</div>',
+        '<div class="section-title">'
+        '🧩 Product Clustering'
+        '</div>',
         unsafe_allow_html=True
     )
 
+
     col1, col2 = st.columns(2)
+
+
+    # ---------------- CLUSTER DISTRIBUTION ----------------
 
     with col1:
 
@@ -621,6 +782,9 @@ elif page == "🧩 Product Clustering":
             use_container_width=True
         )
 
+
+    # ---------------- PCA ----------------
+
     with col2:
 
         fig = px.scatter(
@@ -629,7 +793,10 @@ elif page == "🧩 Product Clustering":
             y="PC2",
             color="Cluster",
             hover_name="Product",
-            title="Product Cluster Map",
+            title="Product Cluster Map"
+        )
+
+        fig.update_layout(
             height=450
         )
 
@@ -638,18 +805,40 @@ elif page == "🧩 Product Clustering":
             use_container_width=True
         )
 
-    st.subheader("Cluster Explorer")
+
+    # ---------------- CLUSTER SELECTOR ----------------
+
+    st.subheader(
+        "🔎 Explore a Cluster"
+    )
 
     selected_cluster = st.selectbox(
         "Select Cluster",
         sorted(
-            cluster_data["Cluster"].unique()
+            cluster_data["Cluster"]
+            .unique()
         )
     )
 
-    selected_products = cluster_data[
-        cluster_data["Cluster"] == selected_cluster
-    ][["Product", "Cluster"]]
+    selected_products = (
+        cluster_data[
+            cluster_data["Cluster"]
+            == selected_cluster
+        ][
+            ["Product", "Cluster"]
+        ]
+        .copy()
+    )
+
+    selected_products["Product"] = (
+        selected_products["Product"]
+        .str.title()
+    )
+
+    st.write(
+        f"Products in Cluster {selected_cluster}: "
+        f"**{len(selected_products)}**"
+    )
 
     st.dataframe(
         selected_products,
@@ -657,62 +846,92 @@ elif page == "🧩 Product Clustering":
         hide_index=True
     )
 
-    csv = cluster_data.to_csv(index=False)
 
-    st.download_button(
-        "⬇️ Download Cluster Results",
-        csv,
-        "product_clusters.csv",
-        "text/csv"
+    # Download
+
+    csv = cluster_data.to_csv(
+        index=False
     )
 
-# ============================================================
-# PRODUCT EXPLORER
-# ============================================================
+    st.download_button(
+        label="⬇️ Download Cluster Results",
+        data=csv,
+        file_name="product_clusters.csv",
+        mime="text/csv"
+    )
+
+
+# =========================================================
+# PAGE 5 — PRODUCT EXPLORER
+# =========================================================
 
 elif page == "🔍 Product Explorer":
 
     st.markdown(
-        '<div class="section-title">🔍 Product Explorer</div>',
+        '<div class="section-title">'
+        '🔍 Product Explorer'
+        '</div>',
         unsafe_allow_html=True
     )
+
 
     selected_product = st.selectbox(
         "Choose a product",
         sorted(
-            df["itemDescription"].unique()
+            df["itemDescription"]
+            .unique()
         )
     )
 
-    # Product cluster
+
+    # ---------------- PRODUCT CLUSTER ----------------
+
     product_cluster = cluster_data[
-        cluster_data["Product"] == selected_product
+        cluster_data["Product"]
+        == selected_product
     ]
 
-    if len(product_cluster) > 0:
+
+    if not product_cluster.empty:
 
         cluster_number = int(
-            product_cluster["Cluster"].iloc[0]
+            product_cluster[
+                "Cluster"
+            ].iloc[0]
         )
 
         st.success(
-            f"🧩 {selected_product.title()} belongs to Cluster {cluster_number}"
+            f"🧩 {selected_product.title()} "
+            f"belongs to Cluster {cluster_number}"
         )
 
-    # Related products
+
+    # ---------------- RELATED PRODUCTS ----------------
+
     related = pair_df[
-        (pair_df["Product 1"] == selected_product)
+        (
+            pair_df["Product 1"]
+            == selected_product
+        )
         |
-        (pair_df["Product 2"] == selected_product)
+        (
+            pair_df["Product 2"]
+            == selected_product
+        )
     ].copy()
 
-    if len(related) > 0:
+
+    if not related.empty:
 
         related["Related Product"] = np.where(
-            related["Product 1"] == selected_product,
+            related["Product 1"]
+            == selected_product,
+
             related["Product 2"],
+
             related["Product 1"]
         )
+
 
         related = related[
             [
@@ -724,21 +943,34 @@ elif page == "🔍 Product Explorer":
             ascending=False
         )
 
-        st.subheader(
-            f"🛒 Products commonly purchased with {selected_product.title()}"
+
+        related_display = (
+            related.head(10)
+            .copy()
         )
 
+        related_display["Related Product"] = (
+            related_display["Related Product"]
+            .str.title()
+        )
+
+
         fig = px.bar(
-            related.head(10),
+            related_display,
             x="Purchase Together",
             y="Related Product",
             orientation="h",
-            title="Related Products"
+            title=(
+                "Products Commonly Purchased With "
+                + selected_product.title()
+            )
         )
 
         fig.update_layout(
             height=450,
-            yaxis=dict(categoryorder="total ascending")
+            yaxis=dict(
+                categoryorder="total ascending"
+            )
         )
 
         st.plotly_chart(
@@ -746,33 +978,48 @@ elif page == "🔍 Product Explorer":
             use_container_width=True
         )
 
+
+        st.subheader(
+            "📋 Related Product Details"
+        )
+
         st.dataframe(
-            related.head(15),
+            related_display,
             use_container_width=True,
             hide_index=True
         )
 
+
     else:
 
         st.warning(
-            "No co-purchase information available for this product."
+            "No co-purchase information is available "
+            "for this product."
         )
 
-# ============================================================
+
+# =========================================================
 # FOOTER
-# ============================================================
+# =========================================================
 
 st.divider()
 
 st.markdown(
     """
-    <center>
-    <small>
-    🛒 MarketBasket AI | Retail Market Basket Clustering
+    <div style="text-align:center; color:#6b7280;">
+
+    🛒 <b>MarketBasket AI</b>
+
     <br>
-    Built using Python • Pandas • Scikit-learn • Plotly • Streamlit
-    </small>
-    </center>
+
+    Retail Market Basket Clustering
+
+    <br><br>
+
+    Built with Python • Pandas • Scikit-learn • Plotly • Streamlit
+
+    </div>
     """,
     unsafe_allow_html=True
 )
+```
