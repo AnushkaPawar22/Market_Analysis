@@ -1,4 +1,4 @@
-```python
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -837,4 +837,3 @@ st.caption(
     "MarketBasket AI • Retail Market Basket Clustering "
     "• Python • Pandas • Scikit-learn • Plotly • Streamlit"
 )
-```
